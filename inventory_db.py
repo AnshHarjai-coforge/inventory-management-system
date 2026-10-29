@@ -66,3 +66,20 @@ def delete_product(conn, product_id):
     )
     conn.commit()
     return cursor.rowcount == 1
+
+
+def search_products(conn, text="", category=None, max_price_cents=None, in_stock_only=False, low_stock_only=False):
+    """Find products by name, SKU, or supplier, with optional filters."""
+    # LIKE ignores case for ordinary letters. None or 0 means that filter is off.
+    like = "%" + text + "%"
+    return conn.execute(
+        "SELECT p.*, s.name AS supplier_name FROM products p " \
+        "INNER JOIN suppliers s ON p.supplier_id = s.id " \
+        "WHERE (p.name LIKE ? OR p.sku LIKE ? OR s.name LIKE ?) " \
+        "AND (? IS NULL OR p.category = ?) " \
+        "AND (? IS NULL OR p.unit_price_cents <= ?) " \
+        "AND (? = 0 OR p.quantity_in_stock > 0) " \
+        "AND (? = 0 OR p.quantity_in_stock <= p.reorder_level) " \
+        "ORDER BY p.name",
+        (like, like, like, category, category, max_price_cents, max_price_cents, in_stock_only, low_stock_only),
+    ).fetchall()

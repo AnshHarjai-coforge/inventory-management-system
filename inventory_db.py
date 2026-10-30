@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 DEFAULT_DB = Path(__file__).with_name("inventory.db")
@@ -139,3 +140,113 @@ def never_sold_report(conn):
          )
          ORDER BY name
     """).fetchall()
+
+
+# Stock changes and sales
+
+def _now():
+    """Return the current UTC time as text."""
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def restock(conn, product_id, amount, occurred_at=None):
+    """Add stock from a delivery and return the new quantity."""
+    if amount < 0:
+        raise ValueError("restock amount must be positive")
+    if occurred_at is None:
+        occurred_at = _now()
+    with conn:
+        conn.execute(
+            """
+            UPDATE products SET quantity_in_stock = quantity_in_stock + ?
+             WHERE id = ?
+            """,
+            (amount, product_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO stock_movements (product_id, change, reason, occurred_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (product_id, amount, "restock", occurred_at),
+        )
+        row = conn.execute(
+            """
+            SELECT quantity_in_stock FROM products WHERE id = ?
+            """,
+            (product_id,),
+        ).fetchone()
+    return row["quantity_in_stock"]
+
+
+def adjust_stock(conn, product_id, change, occurred_at=None):
+    """Change stock up or down and return the new quantity."""
+    if occurred_at is None:
+        occurred_at = _now()
+    with conn:
+        conn.execute(
+            """
+            UPDATE products SET quantity_in_stock = quantity_in_stock + ?
+             WHERE id = ?
+            """,
+            (change, product_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO stock_movements (product_id, change, reason, occurred_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (product_id, change, "adjustment", occurred_at),
+        )
+        row = conn.execute(
+            """
+            SELECT quantity_in_stock FROM products WHERE id = ?
+            """,
+            (product_id,),
+        ).fetchone()
+    return row["quantity_in_stock"]
+
+
+def record_sale(conn, items, sold_at=None):
+    """Save a sale, its lines, and the stock changes, or save nothing. Return the new sale id."""
+    if sold_at is None:
+        sold_at = _now()
+    with conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO sales (sold_at) VALUES (?)
+            """,
+            (sold_at,),
+        )
+        sale_id = cursor.lastrowid
+        for product_id, quantity in items:
+            product = conn.execute(
+                """
+                SELECT unit_price_cents FROM products WHERE id = ?
+                """,
+                (product_id,),
+            ).fetchone()
+            if product is None:
+                raise ValueError(f"No product with id {product_id}")
+            conn.execute(
+                """
+                INSERT INTO sale_items (sale_id, product_id, quantity, unit_price_cents)
+                VALUES (?, ?, ?, ?)
+                """,
+                (sale_id, product_id, quantity, product["unit_price_cents"]),
+            )
+            conn.execute(
+                """
+                UPDATE products SET quantity_in_stock = quantity_in_stock - ?
+                 WHERE id = ?
+                """,
+                (quantity, product_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO stock_movements (product_id, change, reason, occurred_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (product_id, -quantity, "sale", sold_at),
+            )
+    return sale_id

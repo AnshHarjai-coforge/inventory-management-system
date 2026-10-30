@@ -224,6 +224,8 @@ def main():
     """Run the inventory menu until the user quits."""
     with closing(db.connect()) as conn:
         db.init_schema(conn)
+        low = len(db.low_stock_report(conn))
+        print(f"Low stock: {low} products at or below their reorder level.")
         while True:
             print_menu()
             try:

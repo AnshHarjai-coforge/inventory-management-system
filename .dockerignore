@@ -1,0 +1,11 @@
+.git
+.github
+.cursor
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+*.db
+.DS_Store
+Project-Requirements.md
+inventory-PLAN.md

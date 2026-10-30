@@ -19,3 +19,12 @@ jobs:
         run: ruff check .
       - name: Test
         run: pytest -q
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build image
+        run: docker build -t inventory:1.0.0 .
+      - name: Test inside the image
+        run: docker run --rm inventory:1.0.0 pytest -q

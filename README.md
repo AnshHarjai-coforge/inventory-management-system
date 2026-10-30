@@ -1,6 +1,6 @@
 # inventory-management-system
 
-A hardware store keeps its stock, prices, and sales in a SQLite database. The terminal menu searches products, looks one up, adds one, restocks, records a sale, runs four reports, and backs up the database. Prices are stored as whole cents and shown with two decimals.
+A hardware store keeps its stock, prices, and sales in a SQLite database. The terminal menu searches products, looks one up, adds one, restocks, records a sale, runs four reports, and backs up the database. When the menu starts, it prints how many products are at or below their reorder level. Prices are stored as whole cents and shown with two decimals.
 
 ## How to run it
 
@@ -124,7 +124,7 @@ docker run -it --rm \
   inventory:1.0.0
 ```
 
-The image uses Python 3.15.0. CI builds it and runs the tests inside it. Tag `v1.0.0` on main after this branch is merged.
+The image uses Python 3.15.0. CI builds an image and runs the tests inside it. `v1.0.0` is the image `inventory:1.0.0`. `v1.1.0` is the image `inventory:1.1.0`, built with `docker build -t inventory:1.1.0 .`.
 
 The end of the build looked like this:
 
@@ -197,13 +197,140 @@ docker run --rm -v inventory-data:/data inventory:1.0.0 \
 
 ## Rollback
 
-Version 1.1.0 only adds a low-stock count when the menu starts. The tables stay the same. To go back, run the 1.0.0 image with the same volume:
+Version 1.1.0 only adds a low-stock count when the menu starts. The tables stay the same, and this version writes no new kind of data, so the same database file serves both images. A later release that changed the schema would need a down-migration before the old image could open the file.
+
+I seeded a fresh volume with the 1.1.0 image:
 
 ```bash
-docker run -it --rm \
+docker volume create inventory-rollback
+docker run --rm \
   -e INVENTORY_DB=/data/inventory.db \
-  -v inventory-data:/data \
+  -v inventory-rollback:/data \
+  inventory:1.1.0 \
+  python seed_db.py
+```
+
+```text
+suppliers: 4
+products: 12
+sales: 5
+sale_items: 12
+stock_movements: 0
+```
+
+Then I restocked product 1 by 5 and looked up product 13. The answers were piped in, so each prompt stays on the same line as the next one.
+
+```bash
+printf '4\n1\n5\n2\n13\n0\n' | docker run -i --rm \
+  -e INVENTORY_DB=/data/inventory.db \
+  -v inventory-rollback:/data \
+  inventory:1.1.0
+```
+
+```text
+Low stock: 3 products at or below their reorder level.
+
+Inventory
+1. Search products
+2. Look up a product
+3. Add a product
+4. Restock
+5. Record a sale
+6. Stock value by supplier
+7. Low stock
+8. Sales by product
+9. Products never sold
+10. Back up the database
+0. Quit
+Choice: Product id: Amount: New quantity: 45.
+
+Inventory
+1. Search products
+2. Look up a product
+3. Add a product
+4. Restock
+5. Record a sale
+6. Stock value by supplier
+7. Low stock
+8. Sales by product
+9. Products never sold
+10. Back up the database
+0. Quit
+Choice: Product id: No product with that id.
+
+Inventory
+1. Search products
+2. Look up a product
+3. Add a product
+4. Restock
+5. Record a sale
+6. Stock value by supplier
+7. Low stock
+8. Sales by product
+9. Products never sold
+10. Back up the database
+0. Quit
+Choice:
+```
+
+The first line is the banner. The hammer went from 40 on hand to 45. Product 13 is not in the seed.
+
+The same volume on 1.0.0 has no banner. The restock is still there.
+
+```bash
+printf '2\n1\n0\n' | docker run -i --rm \
+  -e INVENTORY_DB=/data/inventory.db \
+  -v inventory-rollback:/data \
   inventory:1.0.0
 ```
 
-The count goes away. The rows stay. I will paste that output after the 1.1.0 image exists.
+```text
+
+Inventory
+1. Search products
+2. Look up a product
+3. Add a product
+4. Restock
+5. Record a sale
+6. Stock value by supplier
+7. Low stock
+8. Sales by product
+9. Products never sold
+10. Back up the database
+0. Quit
+Choice: Product id: HT-001 Claw Hammer 16oz Hand Tools Northwind Tools 18.99 qty 45 reorder 10
+
+Inventory
+1. Search products
+2. Look up a product
+3. Add a product
+4. Restock
+5. Record a sale
+6. Stock value by supplier
+7. Low stock
+8. Sales by product
+9. Products never sold
+10. Back up the database
+0. Quit
+Choice:
+```
+
+Both images report the same row counts for that file:
+
+```text
+suppliers 4
+products 12
+sales 5
+sale_items 12
+stock_movements 1
+```
+
+## Self-review
+
+If I built this again, I would keep the connection setup, the five tables, and the way a sale is one transaction. `connect` turns foreign keys on every time, the schema holds the rules, and `record_sale` writes the sale, the lines, the stock change, and the log together.
+
+I would split `inventory_db.py` once the reports were in. One file was fine for products and search. After restock, adjust, and sales landed, I was scrolling past the reports to find a stock change. Products, search, reports, and stock changes would each be easier to find in their own file, with `connect` still the only way to open the database.
+
+I would also pass a time into the menu the same way the functions already take a time. The failed-sale section above calls `record_sale` with a fixed timestamp. The menu always uses the current time, so I cannot reproduce that section by typing the sale at the prompt. A menu that asked for a date, and used now when the date was left blank, would make that demo something I could run from the menu.
+
+The thing I want a reviewer to check is `quantity_in_stock` against `stock_movements`. Restock, adjust, and record a sale update the quantity and write the log row in the same transaction, so those two should agree for any change made through those functions. The seed is separate from that. It loads today's shelf counts and leaves `stock_movements` empty, so the seeded sales have no matching movement rows. Adding up the log and comparing it with the quantity on the product is the right check for every restock, adjustment, and sale after seeding. I would want a reviewer to confirm the seed is the exception and the three stock functions stay in agreement.

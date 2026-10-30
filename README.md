@@ -42,3 +42,35 @@ Prices are stored as whole cents. The dollar column is the cents divided by 100,
 | --- | --- | --- |
 | EL-003 | Cable Clips (100pk) | Electrical |
 | GD-002 | Pruning Shears | Garden |
+
+## A sale that fails halfway
+
+The first line sells 1 claw hammer, which is in stock. The second line asks for 7 adjustable wrenches, and only 6 are on the shelf. The error happens on that second line, and the hammer line is rolled back with it.
+
+### Before
+
+| | |
+| --- | --- |
+| sales | 5 |
+| sale_items | 12 |
+| stock_movements | 0 |
+| HT-001 Claw Hammer 16oz | 40 on hand, current price 1899 cents |
+| HT-003 Adjustable Wrench 10in | 6 on hand |
+
+```python
+record_sale(conn, [(1, 1), (3, 7)], "2026-04-01T12:00:00Z")
+```
+
+```text
+sqlite3.IntegrityError: CHECK constraint failed: quantity_in_stock >= 0
+```
+
+### After
+
+| | |
+| --- | --- |
+| sales | 5 |
+| sale_items | 12 |
+| stock_movements | 0 |
+| HT-001 Claw Hammer 16oz | 40 on hand, current price 1899 cents |
+| HT-003 Adjustable Wrench 10in | 6 on hand |

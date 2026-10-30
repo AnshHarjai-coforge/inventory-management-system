@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -250,3 +251,20 @@ def record_sale(conn, items, sold_at=None):
                 (product_id, -quantity, "sale", sold_at),
             )
     return sale_id
+
+
+def backup_database(conn, destination):
+    """Copy the open database to destination."""
+    source = conn.execute("""
+        PRAGMA database_list
+    """).fetchone()["file"]
+    # backup() never returns when the destination is this database.
+    if source and os.path.exists(destination):
+        source_info = os.stat(source)
+        destination_info = os.stat(destination)
+        same_device = source_info.st_dev == destination_info.st_dev
+        same_inode = source_info.st_ino == destination_info.st_ino
+        if same_device and same_inode:
+            raise ValueError("That file is the database already in use.")
+    with closing(sqlite3.connect(destination)) as copy:
+        conn.backup(copy)
